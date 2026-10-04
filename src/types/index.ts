@@ -37,3 +37,18 @@ export interface PrivateFile {
   updated_at: string;
   uploaded_by: string | null;
 }
+
+export interface UploadErrorDetails {
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  lastModified: number;
+  fileExtension: string;
+  stage: 'auth_check' | 'file_read' | 'storage_upload' | 'db_insert';
+  errorMessage: string;
+  errorName?: string;
+  statusCode?: string | number;
+  httpStatus?: number;
+  timestamp: string;
+}
+

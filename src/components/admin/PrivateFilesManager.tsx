@@ -2,12 +2,13 @@ import { useState, useCallback, useRef, useEffect, type DragEvent } from 'react'
 import {
   Upload, Download, Trash2, Search, FileText,
   File as FileIcon, Image, Video, Archive, Code, Music,
-  HardDrive, MoreHorizontal,
+  HardDrive, MoreHorizontal, AlertCircle, Copy, Check, X,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { usePrivateFiles } from '../../hooks/usePrivateFiles';
+import { usePrivateFiles, PrivateFileUploadError } from '../../hooks/usePrivateFiles';
 import { useToast } from '../shared/Toast';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
-import type { PrivateFile } from '../../types';
+import type { PrivateFile, UploadErrorDetails } from '../../types';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB (Supabase Storage standard limit)
 
@@ -99,6 +100,10 @@ export function PrivateFilesManager() {
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
   const downloadingFileIdRef = useRef<string | null>(null);
 
+  const [uploadErrorDetails, setUploadErrorDetails] = useState<UploadErrorDetails | null>(null);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [copiedError, setCopiedError] = useState(false);
+
   useEffect(() => {
     downloadingFileIdRef.current = downloadingFileId;
   }, [downloadingFileId]);
@@ -140,6 +145,8 @@ export function PrivateFilesManager() {
     setUploading(true);
     let successCount = 0;
     let failCount = 0;
+    let lastError: PrivateFileUploadError | null = null;
+    const errorMessages: string[] = [];
 
     for (let i = 0; i < validFiles.length; i++) {
       const file = validFiles[i];
@@ -150,9 +157,28 @@ export function PrivateFilesManager() {
         setUploadProgress(progressMsg);
         await uploadFile(file);
         successCount++;
-      } catch (err) {
+      } catch (err: unknown) {
         console.error('Upload failed:', file.name, err);
         failCount++;
+        if (err instanceof PrivateFileUploadError) {
+          lastError = err;
+          errorMessages.push(err.message);
+        } else if (err instanceof Error) {
+          errorMessages.push(err.message);
+          lastError = new PrivateFileUploadError(err.message, {
+            fileName: file.name,
+            fileType: file.type || 'unknown',
+            fileSize: file.size,
+            lastModified: file.lastModified,
+            fileExtension: file.name.split('.').pop() || 'unknown',
+            stage: 'storage_upload',
+            errorMessage: err.message,
+            errorName: err.name,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          errorMessages.push('Unknown error');
+        }
       }
     }
 
@@ -160,6 +186,7 @@ export function PrivateFilesManager() {
     setUploadProgress(null);
 
     if (successCount > 0 && failCount === 0) {
+      setUploadErrorDetails(null);
       showToast(
         successCount === 1
           ? 'File uploaded successfully!'
@@ -167,9 +194,21 @@ export function PrivateFilesManager() {
         'success'
       );
     } else if (successCount > 0 && failCount > 0) {
-      showToast(`${successCount} uploaded, ${failCount} failed.`, 'info');
+      if (lastError) {
+        setUploadErrorDetails(lastError.details);
+      }
+      showToast(
+        `${successCount} uploaded, ${failCount} failed. ${lastError?.message || ''}`.trim(),
+        'info'
+      );
     } else if (failCount > 0) {
-      showToast('Upload failed. Please try again.', 'error');
+      if (lastError) {
+        setUploadErrorDetails(lastError.details);
+        showToast(lastError.message, 'error');
+      } else {
+        const fallbackMsg = errorMessages[0] || 'Upload failed. Please check file and try again.';
+        showToast(fallbackMsg, 'error');
+      }
     }
 
     // Reset file input
@@ -336,6 +375,34 @@ export function PrivateFilesManager() {
     }
   }, [deleteTarget, deleteFile, showToast]);
 
+  const handleCopyErrorDetails = useCallback(() => {
+    if (!uploadErrorDetails) return;
+    const report = [
+      'CopyIt Private Files Upload Diagnostic Report',
+      '---------------------------------------------',
+      `File Name: ${uploadErrorDetails.fileName}`,
+      `File Size: ${uploadErrorDetails.fileSize} bytes (${formatFileSize(uploadErrorDetails.fileSize)})`,
+      `File MIME: ${uploadErrorDetails.fileType}`,
+      `File Extension: .${uploadErrorDetails.fileExtension}`,
+      `Last Modified: ${new Date(uploadErrorDetails.lastModified).toISOString()}`,
+      `Failure Stage: ${uploadErrorDetails.stage}`,
+      `Error Name: ${uploadErrorDetails.errorName || 'None'}`,
+      `Error Message: ${uploadErrorDetails.errorMessage}`,
+      `Status Code: ${uploadErrorDetails.statusCode ?? 'N/A'}`,
+      `HTTP Status: ${uploadErrorDetails.httpStatus ?? 'N/A'}`,
+      `Timestamp: ${uploadErrorDetails.timestamp}`,
+      `User Agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'}`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(report).then(() => {
+      setCopiedError(true);
+      setTimeout(() => setCopiedError(false), 2000);
+      showToast('Diagnostic details copied to clipboard!', 'success');
+    }).catch(() => {
+      showToast('Failed to copy to clipboard.', 'error');
+    });
+  }, [uploadErrorDetails, showToast]);
+
   return (
     <div>
       <h2 className="text-lg font-semibold text-surface-900 dark:text-surface-100 mb-4 flex items-center gap-2">
@@ -402,6 +469,85 @@ export function PrivateFilesManager() {
           )}
         </div>
       </div>
+
+      {/* Upload Error & Diagnostic Details Panel */}
+      {uploadErrorDetails && (
+        <div className="mb-6 rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50/80 dark:bg-red-950/20 p-4 transition-all">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <AlertCircle size={18} />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-red-900 dark:text-red-200">
+                  Upload Failed
+                </h4>
+                <p className="text-sm text-red-700 dark:text-red-300 mt-0.5">
+                  {uploadErrorDetails.errorMessage}
+                </p>
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-red-600 dark:text-red-400">
+                  <span className="font-medium bg-red-100 dark:bg-red-900/40 px-2 py-0.5 rounded-md">
+                    {uploadErrorDetails.fileName}
+                  </span>
+                  <span>{formatFileSize(uploadErrorDetails.fileSize)}</span>
+                  <span>•</span>
+                  <span>Stage: <strong className="capitalize">{uploadErrorDetails.stage.replace('_', ' ')}</strong></span>
+                  {uploadErrorDetails.statusCode && (
+                    <>
+                      <span>•</span>
+                      <span>Code: {String(uploadErrorDetails.statusCode)}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setUploadErrorDetails(null)}
+              className="text-red-400 hover:text-red-600 dark:hover:text-red-300 p-1 rounded-lg transition-colors"
+              title="Dismiss"
+              aria-label="Dismiss error"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Collapsible Technical Details */}
+          <div className="mt-3 pt-3 border-t border-red-200/60 dark:border-red-900/30">
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setShowTechnicalDetails((prev) => !prev)}
+                className="text-xs font-medium text-red-700 dark:text-red-300 hover:text-red-900 dark:hover:text-red-100 flex items-center gap-1"
+              >
+                {showTechnicalDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {showTechnicalDetails ? 'Hide Diagnostic Details' : 'View Diagnostic Details'}
+              </button>
+              <button
+                onClick={handleCopyErrorDetails}
+                className="text-xs font-medium text-red-700 dark:text-red-300 hover:text-red-900 dark:hover:text-red-100 flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-100/70 dark:bg-red-900/40 transition-colors"
+              >
+                {copiedError ? <Check size={13} className="text-emerald-600 dark:text-emerald-400" /> : <Copy size={13} />}
+                <span>{copiedError ? 'Copied!' : 'Copy Diagnostics'}</span>
+              </button>
+            </div>
+
+            {showTechnicalDetails && (
+              <pre className="mt-2.5 p-3 rounded-xl bg-white/70 dark:bg-black/40 border border-red-200/50 dark:border-red-900/40 text-[11px] leading-relaxed text-surface-800 dark:text-surface-200 font-mono overflow-x-auto whitespace-pre-wrap">
+{`File Name: ${uploadErrorDetails.fileName}
+File Type: ${uploadErrorDetails.fileType}
+File Size: ${uploadErrorDetails.fileSize} bytes (${formatFileSize(uploadErrorDetails.fileSize)})
+File Ext: .${uploadErrorDetails.fileExtension}
+Last Modified: ${new Date(uploadErrorDetails.lastModified).toLocaleString()}
+Failure Stage: ${uploadErrorDetails.stage}
+Error Name: ${uploadErrorDetails.errorName || 'None'}
+Error Message: ${uploadErrorDetails.errorMessage}
+Status Code: ${uploadErrorDetails.statusCode ?? 'N/A'}
+HTTP Status: ${uploadErrorDetails.httpStatus ?? 'N/A'}
+Timestamp: ${uploadErrorDetails.timestamp}`}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* File list card */}
       <div className="macos-card overflow-hidden">
