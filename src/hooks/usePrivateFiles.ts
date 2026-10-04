@@ -76,26 +76,47 @@ export function usePrivateFiles() {
 
   const downloadFile = useCallback(async (file: PrivateFile): Promise<void> => {
     try {
-      // Generate a signed URL (valid for 60 seconds)
+      // 1. Generate an authenticated signed URL (valid for 60 seconds)
       const { data, error: signError } = await supabase.storage
         .from('private-files')
-        .createSignedUrl(file.storage_path, 60);
+        .createSignedUrl(file.storage_path, 60, {
+          download: file.file_name,
+        });
 
       if (signError || !data?.signedUrl) {
-        throw new Error('Failed to generate download link.');
+        console.error('Storage sign error:', signError);
+        throw new Error('Unable to download this file. Please try again.');
       }
 
-      // Trigger browser download
+      // 2. Fetch the file data using the authenticated signed URL
+      const response = await fetch(data.signedUrl);
+      if (!response.ok) {
+        console.error('Download fetch failed:', response.status, response.statusText);
+        throw new Error('Unable to download this file. Please try again.');
+      }
+
+      // 3. Convert response to a Blob
+      const blob = await response.blob();
+
+      // 4. Create a temporary local same-origin Blob URL
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      // 5. Trigger browser download with the original filename
       const link = document.createElement('a');
-      link.href = data.signedUrl;
+      link.href = blobUrl;
       link.download = file.file_name;
       link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+
+      // 6. Revoke the temporary Blob URL after a short delay
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 1000);
     } catch (err) {
       console.error('Download error:', err);
-      throw new Error('Failed to download file. Please try again.');
+      throw new Error('Unable to download this file. Please try again.');
     }
   }, []);
 

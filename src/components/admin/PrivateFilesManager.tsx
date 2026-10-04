@@ -96,6 +96,13 @@ export function PrivateFilesManager() {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const downloadingFileIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    downloadingFileIdRef.current = downloadingFileId;
+  }, [downloadingFileId]);
+
   const isMac = getIsMac();
   const pasteShortcut = isMac ? 'Cmd+V' : 'Ctrl+V';
 
@@ -295,12 +302,21 @@ export function PrivateFilesManager() {
 
   // Download handler
   const handleDownload = useCallback(async (file: PrivateFile) => {
+    // Prevent accidental multiple clicks while a download is already in progress
+    if (downloadingFileIdRef.current) return;
+    downloadingFileIdRef.current = file.id;
+    setDownloadingFileId(file.id);
+
     try {
       await downloadFile(file);
-      showToast(`Downloading ${file.file_name}`, 'success');
+      showToast(`Downloaded ${file.file_name}`, 'success');
     } catch (err) {
       console.error('Download failed:', err);
-      showToast('Download failed. Please try again.', 'error');
+      const message = err instanceof Error ? err.message : 'Unable to download this file. Please try again.';
+      showToast(message, 'error');
+    } finally {
+      downloadingFileIdRef.current = null;
+      setDownloadingFileId(null);
     }
   }, [downloadFile, showToast]);
 
@@ -484,18 +500,33 @@ export function PrivateFilesManager() {
               </div>
 
               {/* Actions - Desktop */}
-              <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div
+                className={`hidden sm:flex items-center gap-1 transition-opacity ${
+                  downloadingFileId === file.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
                 <button
                   onClick={() => handleDownload(file)}
-                  className="macos-btn-ghost p-2 text-[#22A06B] dark:text-[#52C58F] hover:bg-[#E1F3E9] dark:hover:bg-[#176B48]/20"
-                  title="Download"
-                  aria-label={`Download ${file.file_name}`}
+                  disabled={downloadingFileId !== null}
+                  className={`macos-btn-ghost p-2 text-[#22A06B] dark:text-[#52C58F] hover:bg-[#E1F3E9] dark:hover:bg-[#176B48]/20 transition-all disabled:opacity-50 ${
+                    downloadingFileId === file.id ? 'cursor-wait bg-[#E1F3E9] dark:bg-[#176B48]/20 !opacity-100' : ''
+                  }`}
+                  title={downloadingFileId === file.id ? 'Downloading...' : 'Download'}
+                  aria-label={downloadingFileId === file.id ? `Downloading ${file.file_name}` : `Download ${file.file_name}`}
                 >
-                  <Download size={15} />
+                  {downloadingFileId === file.id ? (
+                    <span className="flex items-center gap-1.5 text-xs font-medium px-1">
+                      <div className="w-3.5 h-3.5 border-2 border-[#22A06B]/30 border-t-[#22A06B] rounded-full animate-spin" />
+                      <span className="hidden md:inline">Downloading...</span>
+                    </span>
+                  ) : (
+                    <Download size={15} />
+                  )}
                 </button>
                 <button
                   onClick={() => setDeleteTarget(file)}
-                  className="macos-btn-ghost p-2 text-red-500 hover:text-red-700"
+                  disabled={downloadingFileId !== null}
+                  className="macos-btn-ghost p-2 text-red-500 hover:text-red-700 disabled:opacity-50"
                   title="Delete"
                   aria-label={`Delete ${file.file_name}`}
                 >
@@ -519,9 +550,19 @@ export function PrivateFilesManager() {
                     <div className="absolute right-0 top-full mt-1 z-20 macos-card p-1 min-w-[160px] shadow-lg animate-scale-in">
                       <button
                         onClick={() => { handleDownload(file); setActiveMenu(null); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#22A06B] dark:text-[#52C58F] hover:bg-[#E1F3E9] dark:hover:bg-[#176B48]/20 rounded-lg transition-colors"
+                        disabled={downloadingFileId !== null}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#22A06B] dark:text-[#52C58F] hover:bg-[#E1F3E9] dark:hover:bg-[#176B48]/20 rounded-lg transition-colors disabled:opacity-50"
                       >
-                        <Download size={14} /> Download
+                        {downloadingFileId === file.id ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-[#22A06B]/30 border-t-[#22A06B] rounded-full animate-spin" />
+                            <span>Downloading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download size={14} /> Download
+                          </>
+                        )}
                       </button>
                       <div className="my-1 border-t border-surface-200 dark:border-surface-700" />
                       <button
