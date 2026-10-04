@@ -10,6 +10,7 @@ import { useToast } from '../shared/Toast';
 import { ThemeToggle } from '../shared/ThemeToggle';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentPreview } from './DocumentPreview';
+import { PrivateFilesManager } from './PrivateFilesManager';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import type { Document } from '../../types';
 
@@ -253,6 +254,11 @@ export function AdminDashboard() {
             onUnpublish={(doc) => setConfirmAction({ type: 'unpublish', document: doc })}
             onDelete={(doc) => setConfirmAction({ type: 'delete', document: doc })}
           />
+        </div>
+
+        {/* Private Files - completely separate from published content */}
+        <div className="mb-8">
+          <PrivateFilesManager />
         </div>
       </main>
 

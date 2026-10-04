@@ -26,3 +26,14 @@ export interface UploadedFile {
 export type ContentType = 'html' | 'markdown' | 'plain_text';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
+
+export interface PrivateFile {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  file_size: number;
+  mime_type: string;
+  created_at: string;
+  updated_at: string;
+  uploaded_by: string | null;
+}
