@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { FileText } from 'lucide-react';
 import { ThemeToggle } from '../shared/ThemeToggle';
+import { InstallButton } from '../shared/InstallButton';
 
 export function Navbar() {
   return (
@@ -19,7 +20,8 @@ export function Navbar() {
           </Link>
 
           {/* Right side */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <InstallButton />
             <ThemeToggle />
           </div>
         </div>

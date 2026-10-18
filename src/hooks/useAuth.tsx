@@ -46,6 +46,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    try {
+      if (typeof window !== 'undefined' && 'caches' in window) {
+        const cacheKeys = await window.caches.keys();
+        await Promise.all(
+          cacheKeys
+            .filter((key) => !key.startsWith('workbox-precache'))
+            .map((key) => window.caches.delete(key))
+        );
+      }
+    } catch {
+      // Ignore cache clearing errors
+    }
     await supabase.auth.signOut();
   }, []);
 

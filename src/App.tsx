@@ -21,6 +21,9 @@ const NewDocumentPage = lazy(() =>
 const EditDocumentPage = lazy(() =>
   import('./pages/EditDocumentPage').then((m) => ({ default: m.EditDocumentPage }))
 );
+const PrivateFilesPage = lazy(() =>
+  import('./pages/PrivateFilesPage').then((m) => ({ default: m.PrivateFilesPage }))
+);
 
 function AdminFallback() {
   return (
@@ -83,6 +86,14 @@ export default function App() {
                   element={
                     <Suspense fallback={<AdminFallback />}>
                       <EditDocumentPage />
+                    </Suspense>
+                  }
+                />
+                <Route
+                  path="private-files"
+                  element={
+                    <Suspense fallback={<AdminFallback />}>
+                      <PrivateFilesPage />
                     </Suspense>
                   }
                 />
