@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Globe, FolderOpen, Clock, Upload, Type } from 'lucide-react';
 import { useDocuments } from '../../hooks/useDocuments';
 import { useToast } from '../shared/Toast';
-import { AdminNavbar } from './AdminNavbar';
 import { DocumentLibrary } from './DocumentLibrary';
 import { DocumentPreview } from './DocumentPreview';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
@@ -100,9 +99,7 @@ export function AdminDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#EEF6F1] dark:bg-[#0D1612]">
-      {/* Admin Navbar */}
-      <AdminNavbar />
+    <div className="w-full">
 
       {/* Main content */}
       <main className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">

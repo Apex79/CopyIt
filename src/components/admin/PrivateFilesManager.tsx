@@ -8,6 +8,7 @@ import {
 import { usePrivateFiles, PrivateFileUploadError } from '../../hooks/usePrivateFiles';
 import { useToast } from '../shared/Toast';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
+import { DeleteAllFilesDialog } from './DeleteAllFilesDialog';
 import type { PrivateFile, UploadErrorDetails } from '../../types';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB (Supabase Storage standard limit)
@@ -85,7 +86,7 @@ function getExtensionFromMime(mimeType: string): string {
 }
 
 export function PrivateFilesManager() {
-  const { files, loading, uploadFile, downloadFile, deleteFile } = usePrivateFiles();
+  const { files, loading, uploadFile, downloadFile, deleteFile, deleteAllFiles } = usePrivateFiles();
   const { showToast } = useToast();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,6 +105,12 @@ export function PrivateFilesManager() {
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [copiedError, setCopiedError] = useState(false);
 
+  // Bulk Delete All State
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [deleteAllLoading, setDeleteAllLoading] = useState(false);
+  const [deleteAllProgress, setDeleteAllProgress] = useState('');
+  const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
+
   useEffect(() => {
     downloadingFileIdRef.current = downloadingFileId;
   }, [downloadingFileId]);
@@ -114,6 +121,44 @@ export function PrivateFilesManager() {
   const filteredFiles = files.filter((f) =>
     f.file_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Bulk Delete All handler
+  const handleConfirmDeleteAll = useCallback(async () => {
+    setDeleteAllLoading(true);
+    setDeleteAllError(null);
+    setDeleteAllProgress(`Starting deletion of ${files.length} files...`);
+
+    try {
+      const result = await deleteAllFiles((deleted, total) => {
+        setDeleteAllProgress(`Deleting files (${deleted}/${total})...`);
+      });
+
+      if (result.failedCount === 0 && result.deletedCount > 0) {
+        showToast(`Successfully deleted all ${result.deletedCount} files.`, 'success');
+        setShowDeleteAllDialog(false);
+        setDeleteAllError(null);
+      } else if (result.failedCount > 0 && result.deletedCount > 0) {
+        showToast(`Deleted ${result.deletedCount} files, but ${result.failedCount} failed to delete.`, 'info');
+        setDeleteAllError(
+          `${result.failedCount} files could not be deleted.${result.error ? ` (${result.error})` : ''} You can retry deleting the remaining files.`
+        );
+      } else if (result.failedCount > 0 && result.deletedCount === 0) {
+        showToast(`Failed to delete files. ${result.error || ''}`.trim(), 'error');
+        setDeleteAllError(result.error || 'Failed to delete files. Please try again.');
+      } else {
+        showToast('No files to delete.', 'info');
+        setShowDeleteAllDialog(false);
+      }
+    } catch (err) {
+      console.error('Delete all failed:', err);
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred while deleting files.';
+      showToast(msg, 'error');
+      setDeleteAllError(msg);
+    } finally {
+      setDeleteAllLoading(false);
+      setDeleteAllProgress('');
+    }
+  }, [deleteAllFiles, files.length, showToast]);
 
   // Upload handlers
   const handleUploadFiles = useCallback(async (fileList: FileList | File[]) => {
@@ -551,15 +596,34 @@ Timestamp: ${uploadErrorDetails.timestamp}`}
 
       {/* File list card */}
       <div className="macos-card overflow-hidden">
-        {/* Header with search */}
+        {/* Header with search and Delete All */}
         <div className="p-4 border-b border-surface-200 dark:border-surface-700">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <h3 className="font-semibold text-surface-900 dark:text-surface-100">
-              Files
-              <span className="ml-2 text-sm font-normal text-surface-500">
-                ({files.length})
-              </span>
-            </h3>
+            <div className="flex items-center gap-3">
+              <h3 className="font-semibold text-surface-900 dark:text-surface-100">
+                Files
+                <span className="ml-2 text-sm font-normal text-surface-500">
+                  ({files.length})
+                </span>
+              </h3>
+
+              {files.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteAllError(null);
+                    setShowDeleteAllDialog(true);
+                  }}
+                  disabled={loading || uploading || deleteAllLoading}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200/80 dark:border-red-900/40 transition-colors disabled:opacity-40 disabled:pointer-events-none shadow-2xs"
+                  title="Delete all private files"
+                  aria-label="Delete all files"
+                >
+                  <Trash2 size={13} />
+                  <span>Delete All</span>
+                </button>
+              )}
+            </div>
 
             {files.length > 0 && (
               <div className="relative w-full sm:w-72">
@@ -739,6 +803,22 @@ Timestamp: ${uploadErrorDetails.timestamp}`}
           onCancel={() => setDeleteTarget(null)}
         />
       )}
+
+      {/* Delete all files confirmation dialog */}
+      <DeleteAllFilesDialog
+        open={showDeleteAllDialog}
+        fileCount={files.length}
+        loading={deleteAllLoading}
+        progressText={deleteAllProgress}
+        errorMessage={deleteAllError}
+        onConfirm={handleConfirmDeleteAll}
+        onCancel={() => {
+          if (!deleteAllLoading) {
+            setShowDeleteAllDialog(false);
+            setDeleteAllError(null);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -12,6 +12,12 @@ export class PrivateFileUploadError extends Error {
   }
 }
 
+export interface DeleteAllResult {
+  deletedCount: number;
+  failedCount: number;
+  error?: string;
+}
+
 export function getFileExt(fileName: string): string {
   const parts = fileName.split('.');
   return parts.length > 1 ? (parts.pop()?.toLowerCase() || '') : '';
@@ -421,6 +427,201 @@ export function usePrivateFiles() {
     }
   }, []);
 
+  const deleteAllFiles = useCallback(
+    async (onProgress?: (deleted: number, total: number) => void): Promise<DeleteAllResult> => {
+      // 1. Fetch all records from database, handling pagination if there are >1000 records
+      let allRecords: PrivateFile[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      try {
+        while (hasMore) {
+          const { data, error: fetchErr } = await supabase
+            .from('private_files')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1);
+
+          if (fetchErr) {
+            console.error('[PrivateFiles] Error fetching files for bulk delete:', fetchErr);
+            throw new Error(fetchErr.message || 'Failed to list files for deletion.');
+          }
+
+          if (data && data.length > 0) {
+            allRecords = allRecords.concat(data);
+            if (data.length < pageSize) {
+              hasMore = false;
+            } else {
+              from += pageSize;
+            }
+          } else {
+            hasMore = false;
+          }
+        }
+      } catch (err) {
+        console.error('[PrivateFiles] Listing files failed:', err);
+        const msg = err instanceof Error ? err.message : 'Failed to query file records.';
+        return { deletedCount: 0, failedCount: 0, error: msg };
+      }
+
+      if (allRecords.length === 0) {
+        return { deletedCount: 0, failedCount: 0 };
+      }
+
+      const total = allRecords.length;
+      let deletedCount = 0;
+      let failedCount = 0;
+      let lastError: string | undefined;
+
+      // 2. Discover existing objects in Supabase Storage to avoid blindly retrying
+      // storage deletion for objects whose storage files were already removed in a prior attempt
+      const existingStoragePaths = new Set<string>();
+      let canListStorage = false;
+
+      try {
+        // Collect all distinct folder prefixes represented in allRecords
+        const distinctFolders = Array.from(
+          new Set(
+            allRecords.map((f) =>
+              f.storage_path && f.storage_path.includes('/')
+                ? f.storage_path.substring(0, f.storage_path.lastIndexOf('/'))
+                : ''
+            )
+          )
+        );
+
+        for (const folder of distinctFolders) {
+          let offset = 0;
+          const limit = 1000;
+          let hasMoreStorage = true;
+
+          while (hasMoreStorage) {
+            const { data: storageList, error: listErr } = await supabase.storage
+              .from('private-files')
+              .list(folder, { limit, offset });
+
+            if (listErr) {
+              console.warn(`[PrivateFiles] Could not list bucket folder "${folder}":`, listErr);
+              break;
+            }
+
+            if (storageList && storageList.length > 0) {
+              for (const item of storageList) {
+                if (item.id !== null) {
+                  const fullPath = folder ? `${folder}/${item.name}` : item.name;
+                  existingStoragePaths.add(fullPath);
+                }
+              }
+              if (storageList.length < limit) {
+                hasMoreStorage = false;
+              } else {
+                offset += limit;
+              }
+            } else {
+              hasMoreStorage = false;
+            }
+          }
+        }
+        canListStorage = true;
+      } catch (listErr) {
+        console.warn('[PrivateFiles] Storage listing failed, falling back to direct removal:', listErr);
+        canListStorage = false;
+      }
+
+      // 3. Batch remove in safe chunks of 50 to respect Supabase Storage API limits
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < allRecords.length; i += BATCH_SIZE) {
+        const batch = allRecords.slice(i, i + BATCH_SIZE);
+        let validIdsForDbDelete: string[] = [];
+
+        if (canListStorage) {
+          const filesNeedingStorageRemoval: PrivateFile[] = [];
+          const filesAlreadyRemovedFromStorage: PrivateFile[] = [];
+
+          for (const file of batch) {
+            if (file.storage_path && existingStoragePaths.has(file.storage_path)) {
+              filesNeedingStorageRemoval.push(file);
+            } else {
+              // The object is already gone from storage (e.g. from a prior run where DB delete failed).
+              // Avoid blindly retrying storage removal.
+              filesAlreadyRemovedFromStorage.push(file);
+            }
+          }
+
+          const pathsToRemoveFromStorage = filesNeedingStorageRemoval
+            .map((f) => f.storage_path)
+            .filter(Boolean);
+
+          if (pathsToRemoveFromStorage.length > 0) {
+            const { error: storageErr } = await supabase.storage
+              .from('private-files')
+              .remove(pathsToRemoveFromStorage);
+
+            if (storageErr) {
+              console.error('[PrivateFiles] Storage bulk remove batch error:', storageErr);
+              failedCount += filesNeedingStorageRemoval.length;
+              lastError = storageErr.message || 'Storage deletion failed';
+            } else {
+              validIdsForDbDelete.push(...filesNeedingStorageRemoval.map((f) => f.id));
+            }
+          }
+
+          // Files already removed from storage can safely proceed to metadata record deletion
+          validIdsForDbDelete.push(...filesAlreadyRemovedFromStorage.map((f) => f.id));
+        } else {
+          // Fallback if list was unavailable: remove all batch paths directly
+          const batchPaths = batch.map((f) => f.storage_path).filter(Boolean);
+          const { error: storageErr } = await supabase.storage
+            .from('private-files')
+            .remove(batchPaths);
+
+          if (storageErr) {
+            console.error('[PrivateFiles] Storage bulk remove batch error:', storageErr);
+            failedCount += batch.length;
+            lastError = storageErr.message || 'Storage deletion failed';
+            continue;
+          } else {
+            validIdsForDbDelete = batch.map((f) => f.id);
+          }
+        }
+
+        if (validIdsForDbDelete.length === 0) {
+          continue;
+        }
+
+        // Delete metadata records from database for all objects verified as removed from storage
+        const { error: dbErr } = await supabase
+          .from('private_files')
+          .delete()
+          .in('id', validIdsForDbDelete);
+
+        if (dbErr) {
+          console.error('[PrivateFiles] DB metadata batch delete error:', dbErr);
+          failedCount += validIdsForDbDelete.length;
+          lastError = dbErr.message
+            ? `Storage objects removed, but metadata records could not be deleted: ${dbErr.message}`
+            : 'Storage objects removed, but database metadata could not be deleted.';
+        } else {
+          deletedCount += validIdsForDbDelete.length;
+          // Progressively update in-memory files
+          setFiles((prev) => prev.filter((f) => !validIdsForDbDelete.includes(f.id)));
+          onProgress?.(deletedCount, total);
+        }
+      }
+
+      // 4. Final refresh from database to ensure exact sync
+      await fetchFiles();
+
+      return {
+        deletedCount,
+        failedCount,
+        error: lastError,
+      };
+    },
+    [fetchFiles]
+  );
+
   return {
     files,
     loading,
@@ -429,5 +630,6 @@ export function usePrivateFiles() {
     uploadFile,
     downloadFile,
     deleteFile,
+    deleteAllFiles,
   };
 }

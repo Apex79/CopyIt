@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { FileText } from 'lucide-react';
+import { FileText, Shield } from 'lucide-react';
 import { ThemeToggle } from '../shared/ThemeToggle';
 import { InstallButton } from '../shared/InstallButton';
 
@@ -23,6 +23,15 @@ export function Navbar() {
           <div className="flex items-center gap-2 sm:gap-3">
             <InstallButton />
             <ThemeToggle />
+            <Link
+              to="/admin-panel"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-surface-100 hover:bg-black/5 dark:hover:bg-white/5 transition-colors group"
+              title="Admin Panel"
+              aria-label="Admin Panel"
+            >
+              <Shield size={14} className="text-surface-400 group-hover:text-[#22A06B] transition-colors flex-shrink-0" />
+              <span className="hidden sm:inline">Admin</span>
+            </Link>
           </div>
         </div>
       </div>
